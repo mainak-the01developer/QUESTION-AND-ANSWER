@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ask & Answer — Multiplayer</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#17202a;font-family:Arial,sans-serif}
+header{background:#fff;border-bottom:1px solid #ddd;padding:18px 20px;position:sticky;top:0;z-index:2}
+header h1{margin:0;font-size:23px}.wrap{max-width:850px;margin:24px auto;padding:0 15px}
+.card{background:#fff;border-radius:14px;padding:18px;margin-bottom:18px;box-shadow:0 2px 10px #0001}
+textarea{width:100%;min-height:95px;border:1px solid #ccc;border-radius:10px;padding:12px;font-size:16px;resize:vertical}
+button{border:0;border-radius:9px;padding:11px 17px;background:#2563eb;color:#fff;font-size:15px;cursor:pointer;margin-top:10px}
+button:disabled{opacity:.5}.question{font-size:19px;font-weight:700;margin-bottom:9px}
+.meta{font-size:13px;color:#777;margin-bottom:12px}.reply{background:#f5f7fa;border-radius:9px;padding:10px;margin-top:8px}
+.replybox{display:flex;gap:8px;margin-top:12px}.replybox input{flex:1;border:1px solid #ccc;border-radius:9px;padding:10px;font-size:15px}
+.replybox button{margin:0}.empty{text-align:center;color:#777;padding:25px}
+.status{font-size:13px;color:#666;margin-top:8px}
+</style>
+</head>
+<body>
+<header><h1>💬 Ask & Answer</h1></header>
+<div class="wrap">
+<div class="card">
+<h2>Ask a question</h2>
+<textarea id="q" placeholder="What do you want to ask?"></textarea>
+<button id="post" onclick="postQuestion()">Post Question</button>
+<div class="status" id="status">Connecting…</div>
+</div>
+<div id="feed"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* Paste your Supabase project values here. */
+const SUPABASE_URL = "YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+
+const configured = !SUPABASE_URL.startsWith("YOUR_") && !SUPABASE_ANON_KEY.startsWith("YOUR_");
+const db = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const feed=document.getElementById("feed"), statusEl=document.getElementById("status");
+
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function setStatus(s){statusEl.textContent=s}
+
+async function load(){
+ if(!db){setStatus("Database not connected — add your Supabase URL and key."); return;}
+ setStatus("Connected");
+ const {data,error}=await db.from("questions").select("id,text,created_at,answers(id,text,created_at)").order("created_at",{ascending:false});
+ if(error){setStatus("Database error: "+error.message);return;}
+ render(data||[]);
+}
+function render(rows){
+ if(!rows.length){feed.innerHTML='<div class="card empty">No questions yet. Be the first to ask!</div>';return;}
+ feed.innerHTML=rows.map(x=>`
+ <div class="card">
+  <div class="question">${esc(x.text)}</div>
+  <div class="meta">Posted ${new Date(x.created_at).toLocaleString()}</div>
+  ${(x.answers||[]).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).map(a=>`<div class="reply">💡 ${esc(a.text)}</div>`).join("")}
+  <div class="replybox"><input id="a-${x.id}" placeholder="Write an answer..."><button onclick="answer('${x.id}')">Answer</button></div>
+ </div>`).join("");
+}
+async function postQuestion(){
+ if(!db)return setStatus("Connect the database first.");
+ const input=document.getElementById("q"), text=input.value.trim(); if(!text)return;
+ document.getElementById("post").disabled=true;
+ const {error}=await db.from("questions").insert({text});
+ document.getElementById("post").disabled=false;
+ if(error)setStatus(error.message); else {input.value="";load();}
+}
+async function answer(id){
+ if(!db)return setStatus("Connect the database first.");
+ const input=document.getElementById("a-"+id), text=input.value.trim(); if(!text)return;
+ const {error}=await db.from("answers").insert({question_id:id,text});
+ if(error)setStatus(error.message); else {input.value="";load();}
+}
+if(db){
+ db.channel("questions-live")
+ .on("postgres_changes",{event:"*",schema:"public",table:"questions"},load)
+ .on("postgres_changes",{event:"*",schema:"public",table:"answers"},load)
+ .subscribe();
+}
+load();
+</script>
+</body>
+</html>
